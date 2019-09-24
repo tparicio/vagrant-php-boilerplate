@@ -1,0 +1,192 @@
+#!/bin/sh
+#
+# Vagrantfile to build a full PHP environment out-of-the-box 
+#   - PHP
+#   - Server (apache2, nginx)
+#   - Database (mariadb, mysql) 
+#
+# References: 
+# https://www.vagrantup.com/docs/vagrantfile/machine_settings.html
+
+# 
+# General
+#
+project = "symfony"
+user = "toniparicio@gmail.com"
+name = "Toni Paricio"
+
+#
+# Virtual Machine
+#
+vm_ip_address = "192.168.33.20"
+vm_hostname = "symfony.local"
+vm_www_hostname = "www.#{vm_hostname}"
+vm_sql_hostname = "db.#{vm_hostname}"
+vm_timezone  = "Europe/Madrid"
+vm_current_version = "v1.0.0"
+vm_name = "Vagrant-#{project}-#{vm_current_version}"
+vm_max_memory = 2048
+vm_num_cpus = 1
+vm_max_host_cpu_cap = "50"
+vm_ubuntu_version_string = "xenial"
+
+# synced folder configuration
+synced_webroot_host = "../web"
+synced_webroot_guest = "/var/www/sites/#{project}"
+
+#
+# Server
+#
+server_type = "apache2" # "apache2" | "nginx" | "none"
+
+# 
+# PHP 
+#
+php_version = "7.3"
+composer = true
+framework = "none" # "symfony" | "none"
+
+# 
+# DATABASE
+#
+db_server_type = "mariadb" # "mysql" | "mariadb"
+db_mariadb_version = "10.1"
+db_password = "password"
+db_database_name = "#{project}"
+db_sql_import = "data/sql/database.sql"
+
+#
+# INIT vagrant configuration
+#
+# All Vagrant configuration is done below. The "2" in Vagrant.configure
+# configures the configuration version (we support older styles for
+# backwards compatibility). Please don't change it unless you know what
+# you're doing.
+Vagrant.configure("2") do |config|
+  # The most common configuration options are documented and commented below.
+  # For a complete reference, please see the online documentation at
+  # https://docs.vagrantup.com.
+
+  # Every Vagrant development environment requires a box. You can search for
+  # boxes at https://vagrantcloud.com/search.
+  config.vm.box = "ubuntu/#{vm_ubuntu_version_string}64"
+
+  # Disable automatic box update checking. If you disable this, then
+  # boxes will only be checked for updates when the user runs
+  # `vagrant box outdated`. This is not recommended.
+  # config.vm.box_check_update = false
+
+  # Create a forwarded port mapping which allows access to a specific port
+  # within the machine from a port on the host machine. In the example below,
+  # accessing "localhost:8080" will access port 80 on the guest machine.
+  # NOTE: This will enable public access to the opened port
+  # APACHE2 port
+  config.vm.network "forwarded_port", guest: 8080, host: 80
+  # MYSQL port
+  # config.vm.network "forwarded_port", guest: 3306, host: 3306
+
+  # Create a private network, which allows host-only access to the machine
+  # using a specific IP.
+  # config.vm.network "private_network", ip: "192.168.33.10"
+  config.vm.network "private_network", ip: vm_ip_address, auto_correct: true
+
+
+  # Create a public network, which generally matched to bridged network.
+  # Bridged networks make the machine appear as another physical device on
+  # your network.
+  # config.vm.network "public_network"
+  # config.vm.network "public_network", ip: "192.168.0.10"
+
+  # The URL that the configured box can be found at. If config.vm.box is a 
+  # shorthand to a box in HashiCorp's Vagrant Cloud then this value does not 
+  # need to be specified. Otherwise, it should point to the proper place where 
+  # the box can be found if it is not installed. This can also be an array of 
+  # multiple URLs. The URLs will be tried in order.
+  config.vm.box_url = "https://cloud-images.ubuntu.com/vagrant/#{vm_ubuntu_version_string}/current/#{vm_ubuntu_version_string}-server-cloudimg-amd64-vagrant-disk1.box"
+
+  # The time in seconds that Vagrant will wait for the machine to boot and be 
+  # accessible. By default this is 300 seconds.
+  config.vm.boot_timeout = 300
+
+  # Share an additional folder to the guest VM. The first argument is
+  # the path on the host to the actual folder. The second argument is
+  # the path on the guest to mount the folder. And the optional third
+  # argument is a set of non-required options.
+  # NFS
+  # config.vm.synced_folder synced_webroot_local, synced_webroot_box, :nfs => { :mount_options => ["dmode=777","fmode=666"] }
+  # if error access denied by server while mounting then
+  # nfs-kernel-server cannot work with a FUSE folder like an encrypted ecryptfs home directory.
+  # use this synced folder wihtout nfs
+  config.vm.synced_folder synced_webroot_host, synced_webroot_guest, :mount_options => ["dmode=777","fmode=666"] 
+
+  # Provider-specific configuration so you can fine-tune various
+  # backing providers for Vagrant. These expose provider-specific options.
+  config.vm.provider "virtualbox" do |v|
+    # set name of vm
+    v.name = vm_name
+    # no matter how much cpu is used in vm, use no more than vm_max_host_cpu_cap amount
+    v.customize ["modifyvm", :id, "--cpuexecutioncap", vm_max_host_cpu_cap]
+    # set max amount of host machine ram allotted for vm to use
+    v.customize ["modifyvm", :id, "--memory", vm_max_memory]
+    # set number of cpus from host machine that vm is allowed to use
+    v.customize ["modifyvm", :id, "--cpus", vm_num_cpus]
+    # the next two settings enable using the host computer's dns inside the vagrant box
+    # enable dns proxy in nat mode
+    v.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
+    # use the host's resolver as a dns proxy in nat mode
+    v.customize ["modifyvm", :id, "--natdnsproxy1", "on"]
+  end
+
+  if defined?(VagrantPlugins::HostsUpdater)
+    # set vm hostname
+    config.vm.hostname = vm_hostname
+    config.hostsupdater.aliases = [
+      vm_www_hostname, vm_sql_hostname
+    ]
+  end
+
+  #
+  # INIT PROVISION SCRIPTS
+  #
+  # set vm timezone and do some cleanup before installations
+  config.vm.provision :shell, :path => "scripts/set-vm-timezone.sh", :privileged => true, :args => vm_timezone
+
+  # install miscellaneous utilities
+  config.vm.provision :shell, :path => "scripts/utilities.sh", :privileged => true
+
+  # install php
+  config.vm.provision :shell, :path => "scripts/php.sh", :privileged => true, :args => [
+    php_version, user, name
+  ]
+
+  # install/configure apache2|nginex
+  config.vm.provision :shell, :path => "scripts/#{server_type}.sh", :privileged => true, :args => [
+    php_version, synced_webroot_guest   
+  ]
+
+    # install/configure database server
+  config.vm.provision :shell, :path => "scripts/#{db_server_type}.sh", :privileged => true, :args => [
+    db_password, db_sql_import, db_database_name, db_mariadb_version, vm_ubuntu_version_string
+  ]
+  
+
+  if framework != 'none'
+    # install framework
+    config.vm.provision :shell, :path => "scripts/framework_#{framework}.sh", :privileged => true, :args => [
+      project
+    ]
+  end
+
+  
+  # install composer dependencies
+  if composer
+    config.vm.provision :shell, :path => "scripts/composer.sh", :privileged => true
+  end
+ 
+
+  # confirm setup is complete and output connection info
+  config.vm.provision :shell, :path => "scripts/final-output.sh", :privileged => true, :args => [
+    vm_name, vm_www_hostname, vm_ip_address, vm_sql_hostname
+  ]
+
+end
